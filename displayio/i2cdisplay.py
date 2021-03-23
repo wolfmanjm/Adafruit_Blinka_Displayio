@@ -55,17 +55,51 @@ class I2CDisplay:
         :py:func`displayio.release_displays` first, otherwise it will error after the first
         code.py run.
         """
-        pass
+        if reset is not None:
+            self._reset = digitalio.DigitalInOut(reset)
+            self._reset.switch_to_output(value=True)
+        else:
+            self._reset = None
+        self._i2c = i2c_bus
+        self._dev_addr = device_address
+
+    def _release(self):
+        self.reset()
+        self._i2c.deinit()
+        if self._reset is not None:
+            self._reset.deinit()
 
     def reset(self):
-        """Performs a hardware reset via the reset pin. Raises an exception if called
-        when no reset pin is available.
+        """Performs a hardware reset via the reset pin if one is present.
         """
-        raise NotImplementedError("I2CDisplay reset has not been implemented yet")
+        if self._reset is not None:
+            self._reset.value = False
+            time.sleep(0.001)
+            self._reset.value = True
+            time.sleep(0.001)
 
-    def send(self, command, data):
-        """Sends the given command value followed by the full set of data. Display state,
-        such as vertical scroll, set via send may or may not be reset once the code is
-        done.
-        """
-        raise NotImplementedError("I2CDisplay send has not been implemented yet")
+    def send(self, command, data, *, toggle_every_byte=False):
+        # NOTE: we have to have a toggle_every_byte parameter, which we ignore,
+        # because Display._write() sets it regardless of bus type.
+        if command:
+            n = len(data)
+            if n > 0:
+                command_bytes = bytearray(n*2)
+                for i in range(n):
+                    command_bytes[2 * i] = 0x80
+                    command_bytes[2 * i + 1] = data[i]
+
+                self._i2c.writeto(self._dev_addr, buffer=command_bytes, stop=True)
+
+        else:
+            data_bytes = bytearray(len(data) + 1)
+            data_bytes[0] = 0x40
+            data_bytes[1:] = data
+            self._i2c.writeto(self._dev_addr, buffer=data_bytes, stop=True)
+
+    def begin_transaction(self):
+        while not self._i2c.try_lock():
+            pass
+
+    def end_transaction(self):
+        self._i2c.unlock()
